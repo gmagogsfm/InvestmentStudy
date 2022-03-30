@@ -22,17 +22,17 @@ def validate_header(header_row: Dict[str, str]):
 DayPerf = namedtuple("DayPerf", ["date", "change_percentage"])
 
 # Find the n best days for price increase, returns list of DayPerf for those days.
-def find_best_days(data_dict_reader: csv.DictReader, n: int = 10) -> List[DayPerf]:
-    best_days: List[DayPerf] = []
+def find_days(data_dict_reader: csv.DictReader, n: int = 10, find_best: bool = True) -> List[DayPerf]:
+    chosen_days: List[DayPerf] = []
 
     if n == 0:
-        return best_days
+        return chosen_days
 
     # Special case for first day
     first_day = next(data_dict_reader)
     change_absolute_value = float(first_day["close"]) - float(first_day["open"])
     change_percentage = change_absolute_value / float(first_day["open"])
-    best_days.append(
+    chosen_days.append(
         DayPerf(first_day["date"], change_percentage)
     )
     last_closing_price = float(first_day["open"])
@@ -43,9 +43,9 @@ def find_best_days(data_dict_reader: csv.DictReader, n: int = 10) -> List[DayPer
         change_absolute_value = float(day["close"]) - last_closing_price
         change_percentage = change_absolute_value / last_closing_price
         last_closing_price = float(day["close"])
-        best_days.append(DayPerf(day["date"], change_percentage))
+        chosen_days.append(DayPerf(day["date"], change_percentage))
 
-    # Go through all days to find the best
+    # Go through all days to find the best/worst
     for day in data_dict_reader:
         change_absolute_value = float(day["close"]) - last_closing_price
         change_percentage = (
@@ -54,14 +54,18 @@ def find_best_days(data_dict_reader: csv.DictReader, n: int = 10) -> List[DayPer
         last_closing_price = float(day["close"])
 
         # Skip days when performance isn't in top n days
-        if change_percentage <= best_days[-1].change_percentage:
-            continue
+        if find_best:
+            if change_percentage < chosen_days[-1].change_percentage:
+                continue
+        else:
+            if change_percentage > chosen_days[-1].change_percentage:
+                continue
 
-        best_days.append(DayPerf(day["date"], change_percentage))
-        best_days.sort(key=lambda x: x[1], reverse=True)
-        best_days.pop()
+        chosen_days.append(DayPerf(day["date"], change_percentage))
+        chosen_days.sort(key=lambda x: x[1], reverse=find_best)
+        chosen_days.pop()
 
-    return best_days
+    return chosen_days
 
 # Return performance of a security if certain days are missed in trading
 def perf_if_missing_days(data_dict_reader: csv.DictReader, missed_days: List[DayPerf]):
@@ -100,7 +104,7 @@ def perf_if_missing_days(data_dict_reader: csv.DictReader, missed_days: List[Day
     print(f"If you hold throughout given period, your performance will be: {total_changed_percentage:.2%}")
     print(f"If you miss these days, your performance will be: {changed_percentage_if_missing_days:.2%}")
 
-def analyze(file_name: str, num_best_days_to_miss: int):
+def analyze(file_name: str, num_best_days_to_miss: int, num_worst_days_to_miss: int):
     # First find ten best trading days and see what happens if you miss them
     with open(file_name) as f:
         data_dict_reader = csv.DictReader(f, fieldnames=CSV_FIELD_NAMES)
@@ -109,12 +113,19 @@ def analyze(file_name: str, num_best_days_to_miss: int):
         header = next(data_dict_reader)
         validate_header(header_row=header)
 
-        best_days = find_best_days(data_dict_reader, n=num_best_days_to_miss)
+        best_days = find_days(data_dict_reader, n=num_best_days_to_miss, find_best=True)
 
         # Reset file and skip header
         f.seek(0)
-        header = next(data_dict_reader)
-        perf_if_missing_days(data_dict_reader, best_days)
+        _ = next(data_dict_reader)
+        worst_days = find_days(data_dict_reader, n=num_worst_days_to_miss, find_best=False)
+
+        days_to_miss = best_days + worst_days
+
+        # Reset file and skip header
+        f.seek(0)
+        _ = next(data_dict_reader)
+        perf_if_missing_days(data_dict_reader, days_to_miss)
 
 
 if __name__ == "__main__":
@@ -133,5 +144,11 @@ if __name__ == "__main__":
         help="Number of best trading days to miss",
         default=10,
     )
+    parser.add_argument(
+        "--num_worst_days_to_miss",
+        type=int,
+        help="Number of worst trading days to miss",
+        default=0,
+    )
     args = parser.parse_args()
-    analyze(args.file, args.num_best_days_to_miss)
+    analyze(args.file, args.num_best_days_to_miss, args.num_worst_days_to_miss)
